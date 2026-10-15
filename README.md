@@ -15,9 +15,7 @@ A cellular automata laboratory. The user describes an automaton in natural langu
 9. [AI components](#ai-components)
 10. [Implementation order](#implementation-order)
 11. [Design decisions](#design-decisions)
-12. [Suggested repository layout](#suggested-repository-layout)
-13. [Installation and usage](#installation-and-usage)
-14. [AI interaction logs](#ai-interaction-logs)
+12. [AI interaction logs](#ai-interaction-logs)
 
 ---
 
@@ -25,7 +23,7 @@ A cellular automata laboratory. The user describes an automaton in natural langu
 
 - Describe a cellular automaton (a 2D world, a set of cell types, a set of rules) in natural language, and have the system validate it.
 - Simulate a user-defined number of generations, with the option to store all, some, or none of the intermediate generations.
-- Set the initial world explicitly or generate it from rules (random density, single seed, pattern stamps, symmetric patterns).
+- Set the initial world explicitly.
 - Answer questions about an automaton's behaviour:
   1. What is the state after N iterations?
   2. When does the system reach a stable state?
@@ -33,7 +31,6 @@ A cellular automata laboratory. The user describes an automaton in natural langu
   4. How many cells of type X exist after N iterations?
   5. Does the simulation enter a cycle?
 - Provide a graphical interface for entering the description, setting simulation parameters, and viewing intermediate and final states.
-- Support harder automata such as Rule 30 and Rule 110, and build a generation dataset for a neural network or reinforcement learning experiment.
 
 ## Core idea
 
@@ -72,7 +69,7 @@ Only the NL parser contains an ML model. Everything else is deterministic and te
 
 | Concern | Choice | Why |
 |---|---|---|
-| Language / core | Python 3.11+, NumPy, SciPy | Vectorised stepping (`scipy.signal.convolve2d` for neighbour counts). Numba later if Rule 30 needs speed |
+| Language / core | Python 3.11+, NumPy, SciPy | Vectorised stepping (`scipy.signal.convolve2d` for neighbour counts) |
 | Spec validation | Pydantic v2 + YAML (`ruamel.yaml` or PyYAML) | Schema errors come with readable paths, and the same models generate JSON Schema for the UI |
 | API | FastAPI + WebSocket | Auto-generated OpenAPI docs, streaming generations to the UI |
 | UI | React/Vite with `<canvas>` (Streamlit as a fast first milestone) | Canvas handles large grids and playback well |
@@ -89,7 +86,7 @@ Describes the automaton. Rules are evaluated top to bottom and the first match w
 ```yaml
 schema_version: 1
 name: conway-life
-world: {dimensions: 2, size: [64, 64], boundary: torus}
+world : {size: [64, 64], boundary: torus}
 neighborhood: {type: moore, radius: 1}
 cell_types:
   dead:  {symbol: ".", color: "#ffffff"}
@@ -101,10 +98,9 @@ rules:
     then: alive
   - otherwise: dead
 initial_state:
-  generator: {type: random, density: {alive: 0.3}, seed: 42}
+  alive: {[0, 1], [0, 2]}
+  dead: {[0, 3], [0, 4]}
 ```
-
-Rule 30 uses a different rule family on the same schema: `dimensions: 1` with `rules: [{wolfram: 30}]`. The viewer stacks generations vertically to produce the familiar space-time diagram. Rule types are therefore a registry of families (conditional, totalistic, lookup-table, probabilistic) rather than one universal rule language.
 
 ### State format (`*.cstate`)
 
@@ -182,7 +178,7 @@ classDiagram
 | Parsing | `POST /automata/parse` | `{text, language?}` returns a draft spec, per-slot confidence, issues, and a paraphrase for confirmation |
 | Validation | `POST /automata/validate` | `{yaml}` returns errors and warnings (undefined cell types, rules that can never fire, overlapping conditions, missing default) |
 | Automata | `GET/POST /automata`, `GET/PUT/DELETE /automata/{id}` | CRUD for saved specs |
-| Presets | `GET /presets` | Life, HighLife, Seeds, Rule 30, Rule 110, Brian's Brain, forest-fire model |
+| Presets | `GET /presets` | Life, HighLife, Seeds,  Brian's Brain, forest-fire model |
 | Initial state | `POST /automata/{id}/initial-state` | Generate (random density, single seed, pattern stamp, symmetric) or set an explicit grid |
 | Simulation | `POST /simulations` | `{automaton_id, initial_state, generations, storage: all/every_k/last/none, seed}` returns a `sim_id` and runs as a job |
 | Simulation | `GET /simulations/{id}`, `/generations/{n}`, `/generations?from=&to=` | Status and retrieval of stored frames |
@@ -251,56 +247,12 @@ Using the `.npz` export of generations:
 
 1. **Rule learning:** a small CNN trained on `(state_t, state_t+1)` pairs, measuring accuracy as a function of the neighbourhood size it sees.
 2. **Behaviour classification:** space-time diagrams labelled by Wolfram class or by outcome (stable, cycle, chaotic).
-3. **Rule 30 centre column prediction:** a link to the Rule 30 prize. Near-chance accuracy would itself be a valid result.
-
-## Implementation order
-
-1. Core domain classes, Pydantic spec models, YAML parser, and a Game of Life preset.
-2. State format (save/load/export), storage strategies, and a CLI.
-3. Remaining presets (HighLife, Seeds, Rule 30, Rule 110, Brian's Brain, forest fire) and initial-state generators.
-4. Trajectory-based query engine covering all five questions.
-5. FastAPI endpoints and a minimal UI (grid viewer, parameters, playback).
-6. Dataset export and NN/RL experiments.
-7. Template-based NL parser, verbaliser, then the encoder-based pipeline and its evaluation set.
-8. Polish: Rule 30 / Rule 110 showcase, documentation, installation guide.
 
 ## Design decisions
 
 1. **Rule families:** exactly four (conditional, totalistic, lookup-table, probabilistic). Anything else is refused with a clear message. Unbounded expressiveness makes both validation and NL parsing much harder.
-2. **Dimensions:** 1D is a first-class mode in the engine, not a special case, because Rule 30 depends on it.
-3. **Unbounded growth:** Rule 30 expands indefinitely, so it runs on a wide fixed grid with a centred seed. The boundary assumption is documented.
-4. **Determinism flag:** every compiled automaton is marked deterministic or stochastic, and query answers reflect which guarantees hold.
-5. **Rule semantics:** top-to-bottom, first match wins, with an explicit `otherwise` default.
-
-## Suggested repository layout
-
-```
-cellab/
-  core/            # CellType, Rule, Neighborhood, Boundary, Grid, Simulator
-  spec/            # Pydantic models, YAML loader, validator, compiler
-  state/           # .cstate reader/writer, RLE, storage strategies
-  queries/         # Query subclasses and trajectory explorer
-  nlp/             # segmenter, models, verbaliser, data generator
-  api/             # FastAPI app and routers
-  presets/         # *.cell.yaml
-  experiments/     # dataset export, NN/RL notebooks and scripts
-  ui/              # frontend
-tests/
-docs/
-  ai-log/          # saved conversations with AI assistants
-```
-
-## Installation and usage
-
-> To be completed as the implementation progresses.
-
-```bash
-# Example, to be updated
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn cellab.api.main:app --reload
-```
+2. **Determinism flag:** every compiled automaton is marked deterministic or stochastic, and query answers reflect which guarantees hold.
+3. **Rule semantics:** top-to-bottom, first match wins, with an explicit `otherwise` default.
 
 ## AI interaction logs
 
