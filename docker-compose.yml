@@ -1,0 +1,16 @@
+name: cellab                      # prefixes container, network and volume names
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: cellab
+      POSTGRES_PASSWORD: cellab
+      POSTGRES_DB: cellab
+    ports: ["${CELLAB_DB_PORT:-54329}:5432"]   # host:container
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+
+volumes:
+  pgdata:

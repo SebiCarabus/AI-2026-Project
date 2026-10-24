@@ -1,0 +1,2 @@
+CELLAB_DB_PORT=54329
+DATABASE_URL=postgresql://cellab:cellab@localhost:54329/cellab

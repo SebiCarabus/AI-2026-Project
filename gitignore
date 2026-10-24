@@ -1,0 +1,43 @@
+# --- Secrets / local config (keep .env.example) ---
+.env
+.env.*
+!.env.example
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+
+# --- Testing / tooling caches ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+
+# --- IDEs ---
+.idea/
+.vscode/
+*.iml
+
+# --- OS junk ---
+.DS_Store
+Thumbs.db
+
+# --- Local data (generated runs, exports, logs) ---
+*.log
+/data/
+/exports/
+
+# --- Frontend (if the UI gets a build step) ---
+node_modules/
