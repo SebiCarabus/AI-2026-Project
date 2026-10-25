@@ -41,3 +41,19 @@ Thumbs.db
 
 # --- Frontend (if the UI gets a build step) ---
 node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environment
+.venv/
+
+# Test caches
+.pytest_cache/
+.hypothesis/
+
+# PyCharm: personal settings
+.idea/workspace.xml
+.idea/misc.xml
+.idea/shelf/
