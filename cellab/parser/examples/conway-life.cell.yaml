@@ -1,0 +1,30 @@
+schema_version: 1
+name: conway-life
+
+world:
+  size: [8, 8]
+  boundary: torus
+
+neighborhood:
+  type: moore
+  radius: 1
+
+cell_types:
+  dead:
+    symbol: "."
+    color: "#ffffff"
+  alive:
+    symbol: "#"
+    color: "#111111"
+
+rules:
+  - when: {cell: alive, count: {alive: [2, 3]}}
+    then: alive
+  - when: {cell: dead, count: {alive: 3}}
+    then: alive
+  - otherwise: dead
+
+initial_state:
+  fill: dead
+  cells:
+    alive: [[3, 3], [3, 4], [3, 5]]

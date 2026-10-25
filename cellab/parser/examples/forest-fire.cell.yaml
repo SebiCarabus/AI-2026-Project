@@ -1,0 +1,37 @@
+schema_version: 1
+name: forest-fire
+
+world:
+  size: [32, 32]
+  boundary: {type: fixed, value: empty}
+
+neighborhood:
+  type: moore
+  radius: 1
+
+cell_types:
+  empty:
+    symbol: "."
+    color: "#f5f5dc"
+  tree:
+    symbol: "T"
+    color: "#228b22"
+  burning:
+    symbol: "*"
+    color: "#ff4500"
+
+rules:
+  - when: {cell: burning}
+    then: empty
+  - when: {cell: tree, count: {burning: [1, null]}}
+    then: burning
+  - when: {cell: tree, probability: 0.001}
+    then: burning
+  - when: {cell: empty, probability: 0.05}
+    then: tree
+  - otherwise: same
+
+initial_state:
+  fill: empty
+  cells:
+    tree: [[5, 5], [5, 6], [6, 5], [6, 6]]

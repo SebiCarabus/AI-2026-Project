@@ -1,0 +1,36 @@
+schema_version: 1
+name: rule-110
+
+world:
+  size: [20]
+  boundary: {type: fixed, value: dead}
+
+neighborhood:
+  type: line
+  radius: 1
+
+cell_types:
+  dead:
+    symbol: "."
+    color: "#ffffff"
+  alive:
+    symbol: "#"
+    color: "#111111"
+
+rule:
+  type: lookup
+  table:
+    - {pattern: [dead, dead, dead], then: dead}
+    - {pattern: [dead, dead, alive], then: alive}
+    - {pattern: [dead, alive, dead], then: alive}
+    - {pattern: [dead, alive, alive], then: alive}
+    - {pattern: [alive, dead, dead], then: dead}
+    - {pattern: [alive, dead, alive], then: alive}
+    - {pattern: [alive, alive, dead], then: alive}
+    - {pattern: [alive, alive, alive], then: dead}
+  default: dead
+
+initial_state:
+  fill: dead
+  cells:
+    alive: [[10]]

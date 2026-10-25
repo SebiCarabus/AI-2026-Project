@@ -81,13 +81,24 @@ Only the NL parser contains an ML model. Everything else is deterministic and te
 
 ### Spec format (`*.cell.yaml`)
 
-Describes the automaton. Rules are evaluated top to bottom and the first match wins, which keeps semantics unambiguous and easy to verbalise.
+Describes the automaton. The parser and runnable examples live in `cellab/parser/` and
+`cellab/parser/examples/`; see `cellab/parser/README_Parser.md` for the parser API and
+walkthroughs. Parsing is strict: unknown keys and duplicate YAML keys are rejected.
+`cell_types` order defines the integer state indices, and every cell type needs a unique
+one-character `symbol` and a `#RRGGBB` colour.
+
+`world.size` is `[width, height]` in 2D (the NumPy grid shape becomes `(height, width)`) or
+`[length]` in 1D. Initial-state coordinates are `[row, col]` in 2D or `[index]` in 1D.
 
 ```yaml
 schema_version: 1
 name: conway-life
-world : {size: [64, 64], boundary: torus}
-neighborhood: {type: moore, radius: 1}
+world:
+  size: [64, 64]
+  boundary: torus
+neighborhood:
+  type: moore
+  radius: 1
 cell_types:
   dead:  {symbol: ".", color: "#ffffff"}
   alive: {symbol: "#", color: "#111111"}
@@ -98,9 +109,70 @@ rules:
     then: alive
   - otherwise: dead
 initial_state:
-  alive: {[0, 1], [0, 2]}
-  dead: {[0, 3], [0, 4]}
+  fill: dead
+  cells:
+    alive: [[0, 1], [0, 2]]
+    dead:  [[0, 3], [0, 4]]
 ```
+
+Exactly one of `rules` and `rule` must be present.
+
+#### Conditional and probabilistic rules (`rules`)
+
+Branches are evaluated top to bottom and the first match wins. Exactly one `otherwise` branch is
+required, and it must be last. `when` accepts `cell`, `count`, and `probability`; present parts are
+ANDed. A `count` is either an exact integer or `[min, max]` with either bound allowed to be `null`.
+Targets are a cell type name, `same` (stay unchanged), or `{random: {name: probability, ...}}`.
+Probability conditions and random targets make the automaton stochastic.
+
+```yaml
+rules:
+  - when: {cell: tree, count: {burning: [1, null]}}
+    then: burning
+  - when: {cell: empty, probability: 0.05}
+    then: tree
+  - otherwise: same
+```
+
+#### Totalistic rules (`rule`)
+
+Only the current cell state and the number of neighbours in `counted` matter. Omitting `default`
+means "stay unchanged".
+
+```yaml
+rule:
+  type: totalistic
+  counted: alive
+  transitions:
+    dead:  {3: alive}
+    alive: {2: alive, 3: alive}
+  default: dead
+```
+
+#### Lookup-table rules (`rule`)
+
+`pattern` is read in the neighbourhood's offset order. `default` is optional; if it is omitted the
+table must be complete.
+
+```yaml
+rule:
+  type: lookup
+  table:
+    - {pattern: [dead, dead, dead], then: dead}
+    - {pattern: [dead, dead, alive], then: alive}
+  default: dead
+```
+
+#### World, neighbourhood and boundary
+
+- `world.boundary`: `torus`, `periodic`, `reflect`, or `{type: fixed, value: <cell type>}`.
+- `neighborhood.type`: `moore`, `von_neumann`, `line`, or `custom`; `radius` defaults to `1`.
+  `dimensions` is optional and inferred from the world. `line` is 1D only; `custom` supplies
+  `points: [[row, col], ...]`.
+- Only 1D and 2D worlds are accepted.
+
+`initial_state` is optional. `fill` defaults to the first declared cell type, and `cells` assigns
+explicit coordinates to named types.
 
 ### State format (`*.cstate`)
 
@@ -256,4 +328,6 @@ Using the `.npz` export of generations:
 
 ## AI interaction logs
 
-All conversations with AI assistants used during development are saved in `docs/ai-log/`, one file per conversation, with the assistant name and date in the filename.
+All conversations with AI assistants used during development are saved in `logs/`, one file per
+conversation, named `<assistant>-<date>-<topic>.md`. The parser planning and implementation log is
+in `logs/opencode-2026-10-25-parser.md`.

@@ -1,0 +1,31 @@
+schema_version: 1
+name: life-totalistic
+
+world:
+  size: [8, 8]
+  boundary: periodic
+
+neighborhood:
+  type: moore
+  radius: 1
+
+cell_types:
+  dead:
+    symbol: "."
+    color: "#ffffff"
+  alive:
+    symbol: "#"
+    color: "#111111"
+
+rule:
+  type: totalistic
+  counted: alive
+  transitions:
+    dead: {3: alive}
+    alive: {2: alive, 3: alive}
+  default: dead
+
+initial_state:
+  fill: dead
+  cells:
+    alive: [[3, 3], [3, 4], [3, 5]]
