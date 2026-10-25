@@ -1,4 +1,4 @@
-# --- Secrets / local config (keep .env.example) ---
+# --- Secrets / local config (keep ..env.example) ---
 .env
 .env.*
 !.env.example
