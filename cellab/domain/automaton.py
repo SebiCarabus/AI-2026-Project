@@ -6,7 +6,7 @@ from collections.abc import Sequence
 import numpy as np
 
 from .boundary import Boundary
-from .grid import MAX_STATES, CellType, Grid
+from .grid import DTYPE, MAX_STATES, CellType, Grid
 from .neighborhood import Neighborhood
 from .rules.base import Rule
 
@@ -28,6 +28,7 @@ class Automaton:
         names = [c.name for c in cell_types]
         if len(set(names)) != len(names):
             raise ValueError(f"cell type names must be unique: {names}")
+        boundary.validate(len(cell_types))
         rule.validate(len(cell_types), neighborhood.size)
 
         self.name = name
@@ -44,6 +45,18 @@ class Automaton:
     def is_deterministic(self) -> bool:
         return self.rule.is_deterministic
 
+    def is_quiescent(self) -> bool:
+        """True if a state-0 cell whose neighbours are all state 0 stays state 0.
+
+        Infinite worlds need this: every unstored cell is state 0 and must stay that way.
+        Stochastic automata are never reported as quiescent.
+        """
+        if not self.is_deterministic:
+            return False
+        current = np.zeros(1, dtype=DTYPE)
+        neighbours = np.zeros((1, self.neighborhood.size), dtype=DTYPE)
+        return int(self.rule.apply(current, neighbours, self.num_states)[0]) == 0
+
     def index_of(self, name: str) -> int:
         for i, c in enumerate(self.cell_types):
             if c.name == name:
@@ -56,20 +69,25 @@ class Automaton:
         if grid.cells.size and int(grid.cells.max()) >= self.num_states:
             raise ValueError(f"grid contains states >= {self.num_states}")
 
-    def step(self, grid: Grid, rng: np.random.Generator | None = None) -> Grid:
+    def step(self, grid: Grid, rng: np.random.Generator | None = None, *, check: bool = True) -> Grid:
         """One synchronous update: every cell is computed from the old grid.
 
         Stochastic automata need `rng`. Create it once per run with
         np.random.default_rng(seed) and pass the same generator to every step;
         the same seed then reproduces the same run. Deterministic automata ignore it.
+
+        `check=False` skips the grid scan; use it only for grids this automaton
+        produced (or already checked), e.g. inside a simulation loop.
         """
         if rng is None and not self.is_deterministic:
             raise ValueError(f"automaton {self.name!r} is stochastic; step() needs an rng")
-        self.check_grid(grid)
+        if check:
+            self.check_grid(grid)
         cells = grid.cells
         padded = self.boundary.pad(cells, self.neighborhood.reach)
         neighbours = self.neighborhood.gather(padded, cells.shape)
-        return Grid(self.rule.apply(cells, neighbours, self.num_states, rng))
+        out = self.rule.apply(cells, neighbours, self.num_states, rng)
+        return Grid._trusted(out.astype(DTYPE, copy=False))  # rules always return a fresh array
 
     def __repr__(self) -> str:
         return (f"Automaton({self.name!r}, states={[c.name for c in self.cell_types]}, "

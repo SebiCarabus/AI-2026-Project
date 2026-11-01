@@ -29,12 +29,26 @@ class Grid:
             raise ValueError("a grid needs at least one dimension")
         if not (np.issubdtype(arr.dtype, np.integer) or arr.dtype == np.bool_):
             raise TypeError(f"grid cells must be integers, got {arr.dtype}")
-        if arr.size and (arr.min() < 0 or arr.max() >= MAX_STATES):
+        # uint8 values are always in range, so only other dtypes need the scan.
+        if arr.dtype != DTYPE and arr.size and (arr.min() < 0 or arr.max() >= MAX_STATES):
             raise ValueError(f"cell values must be in [0, {MAX_STATES})")
         arr = np.array(arr, dtype=DTYPE)  # always a private copy
         arr.flags.writeable = False
         self._cells = arr
         self._digest: str | None = None
+
+    @classmethod
+    def _trusted(cls, arr: np.ndarray) -> Grid:
+        """Wrap a fresh uint8 array without copying or scanning it.
+
+        Only for arrays the caller just created and will never touch again
+        (e.g. the output of Rule.apply).
+        """
+        grid = cls.__new__(cls)
+        arr.flags.writeable = False
+        grid._cells = arr
+        grid._digest = None
+        return grid
 
     # --- basic properties -------------------------------------------------
     @property

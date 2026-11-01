@@ -6,11 +6,16 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .rules.base import check_state
+
 
 class Boundary(ABC):
     @abstractmethod
     def pad(self, cells: np.ndarray, width: int) -> np.ndarray:
         """Return `cells` extended by `width` cells on every side of every axis."""
+
+    def validate(self, num_states: int) -> None:
+        """Raise ValueError if the boundary can't work with this automaton. Override as needed."""
 
 
 @dataclass(frozen=True)
@@ -29,6 +34,9 @@ class Fixed(Boundary):
 
     def pad(self, cells: np.ndarray, width: int) -> np.ndarray:
         return np.pad(cells, width, mode="constant", constant_values=self.value)
+
+    def validate(self, num_states: int) -> None:
+        check_state(self.value, num_states, "fixed boundary value")
 
 
 @dataclass(frozen=True)

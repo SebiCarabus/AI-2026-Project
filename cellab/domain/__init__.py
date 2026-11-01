@@ -1,10 +1,12 @@
 from .automaton import Automaton
 from .boundary import Boundary, Fixed, Periodic, Reflect
 from .grid import CellType, Grid
-from .neighborhood import Custom, Line, Moore, Neighborhood, VonNeumann
+from .neighborhood import COMPASS, Custom, Diagonal, Line, Moore, Neighborhood, VonNeumann
+from .universe import ArrayUniverse, Universe
 
 __all__ = [
     "Automaton", "CellType", "Grid",
-    "Neighborhood", "Moore", "VonNeumann", "Line", "Custom",
+    "Neighborhood", "Moore", "VonNeumann", "Diagonal", "Line", "Custom", "COMPASS",
     "Boundary", "Periodic", "Fixed", "Reflect",
+    "Universe", "ArrayUniverse",
 ]

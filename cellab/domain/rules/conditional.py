@@ -6,20 +6,52 @@ contains any of them reports is_deterministic == False and needs an rng to run.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 
 import numpy as np
 
 from .base import Rule, check_state
 
 Rng = np.random.Generator | None
+States = frozenset[int]
+
+_LUT_SIZE = 256  # one entry per possible uint8 cell value
 
 
 def _require_rng(rng: Rng, who: str) -> np.random.Generator:
     if rng is None:
         raise ValueError(f"{who} is random and needs an rng (np.random.default_rng(seed))")
     return rng
+
+
+def _as_states(value: int | Iterable[int]) -> States:
+    """One state or several -> frozenset of ints."""
+    if isinstance(value, (int, np.integer)):
+        return frozenset((int(value),))
+    return frozenset(int(s) for s in value)
+
+
+def _lut(states: States) -> np.ndarray:
+    """Boolean table indexed by cell value: lut[cells] is True where a cell is in `states`.
+
+    Out-of-range states are left out here and reported by validate().
+    """
+    lut = np.zeros(_LUT_SIZE, dtype=bool)
+    lut[[s for s in states if 0 <= s < _LUT_SIZE]] = True
+    return lut
+
+
+def _check_states(states: States, num_states: int, what: str) -> None:
+    if not states:
+        raise ValueError(f"{what} needs at least one state")
+    for s in sorted(states):
+        check_state(s, num_states, what)
+
+
+def _count(neighbours: np.ndarray, lut: np.ndarray) -> np.ndarray:
+    """Per cell, how many neighbour offsets hold a state in the lut."""
+    return np.count_nonzero(lut[neighbours], axis=-1)
 
 
 # --- Conditions -------------------------------------------------------------
@@ -61,27 +93,55 @@ class CellIs(Condition):
 
 
 @dataclass(frozen=True)
-class CountInRange(Condition):
-    """minimum <= (neighbours in `state`) <= maximum. Either bound may be None."""
+class CellIn(Condition):
+    """The cell itself is in any of `states` (one state or a group)."""
 
-    state: int
-    minimum: int | None = None
-    maximum: int | None = None
+    states: States
+    _lut: np.ndarray = field(init=False, repr=False, compare=False)
 
-    @classmethod
-    def at_least(cls, state: int, n: int) -> CountInRange:
-        return cls(state, minimum=n)
-
-    @classmethod
-    def at_most(cls, state: int, n: int) -> CountInRange:
-        return cls(state, maximum=n)
-
-    @classmethod
-    def exactly(cls, state: int, n: int) -> CountInRange:
-        return cls(state, minimum=n, maximum=n)
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "states", _as_states(self.states))
+        object.__setattr__(self, "_lut", _lut(self.states))
 
     def mask(self, current, neighbours, rng=None):
-        counts = np.count_nonzero(neighbours == self.state, axis=-1)
+        return self._lut[current]
+
+    def validate(self, num_states, neighborhood_size):
+        _check_states(self.states, num_states, "CellIn state")
+
+
+@dataclass(frozen=True)
+class CountInRange(Condition):
+    """minimum <= (neighbours in any of `states`) <= maximum. Either bound may be None.
+
+    `states` is one state or a group. Counting is per offset: on a tiny wrapped grid,
+    two offsets landing on the same cell count twice. A range that can never hold
+    with this neighbourhood (e.g. at least 9 of 8) is allowed and simply never matches.
+    """
+
+    states: States
+    minimum: int | None = None
+    maximum: int | None = None
+    _lut: np.ndarray = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "states", _as_states(self.states))
+        object.__setattr__(self, "_lut", _lut(self.states))
+
+    @classmethod
+    def at_least(cls, states: int | Iterable[int], n: int) -> CountInRange:
+        return cls(states, minimum=n)
+
+    @classmethod
+    def at_most(cls, states: int | Iterable[int], n: int) -> CountInRange:
+        return cls(states, maximum=n)
+
+    @classmethod
+    def exactly(cls, states: int | Iterable[int], n: int) -> CountInRange:
+        return cls(states, minimum=n, maximum=n)
+
+    def mask(self, current, neighbours, rng=None):
+        counts = _count(neighbours, self._lut)
         result = np.ones(current.shape, dtype=bool)
         if self.minimum is not None:
             result &= counts >= self.minimum
@@ -90,13 +150,84 @@ class CountInRange(Condition):
         return result
 
     def validate(self, num_states, neighborhood_size):
-        check_state(self.state, num_states, "CountInRange state")
+        _check_states(self.states, num_states, "CountInRange state")
         if self.minimum is None and self.maximum is None:
             raise ValueError("CountInRange needs at least one bound")
-        lo = 0 if self.minimum is None else self.minimum
-        hi = neighborhood_size if self.maximum is None else self.maximum
-        if lo > hi or lo > neighborhood_size or hi < 0:
-            raise ValueError(f"count range [{lo}, {hi}] can never hold with {neighborhood_size} neighbours")
+        if any(b is not None and b < 0 for b in (self.minimum, self.maximum)):
+            raise ValueError("count bounds must be non-negative")
+        if self.minimum is not None and self.maximum is not None and self.minimum > self.maximum:
+            raise ValueError(f"count range [{self.minimum}, {self.maximum}] has minimum greater than maximum")
+
+
+@dataclass(frozen=True)
+class CountInSet(Condition):
+    """(neighbours in any of `states`) is one of `allowed`, e.g. alive: [2, 3]."""
+
+    states: States
+    allowed: frozenset[int]
+    _lut: np.ndarray = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "states", _as_states(self.states))
+        object.__setattr__(self, "allowed", _as_states(self.allowed))
+        object.__setattr__(self, "_lut", _lut(self.states))
+
+    def mask(self, current, neighbours, rng=None):
+        return np.isin(_count(neighbours, self._lut), list(self.allowed))
+
+    def validate(self, num_states, neighborhood_size):
+        _check_states(self.states, num_states, "CountInSet state")
+        if not self.allowed:
+            raise ValueError("CountInSet needs at least one allowed count")
+        if min(self.allowed) < 0:
+            raise ValueError("allowed counts must be non-negative")
+
+
+@dataclass(frozen=True)
+class MoreThan(Condition):
+    """Strictly more neighbours in `states` than in `than`. A tie is False."""
+
+    states: States
+    than: States
+    _lut: np.ndarray = field(init=False, repr=False, compare=False)
+    _than_lut: np.ndarray = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "states", _as_states(self.states))
+        object.__setattr__(self, "than", _as_states(self.than))
+        object.__setattr__(self, "_lut", _lut(self.states))
+        object.__setattr__(self, "_than_lut", _lut(self.than))
+
+    def mask(self, current, neighbours, rng=None):
+        return _count(neighbours, self._lut) > _count(neighbours, self._than_lut)
+
+    def validate(self, num_states, neighborhood_size):
+        _check_states(self.states, num_states, "MoreThan state")
+        _check_states(self.than, num_states, "MoreThan comparison state")
+
+
+@dataclass(frozen=True)
+class NeighbourIn(Condition):
+    """The neighbour at index `position` of the neighbourhood holds any of `states`.
+
+    Resolve a position name to its index with Neighborhood.index_of(name).
+    """
+
+    position: int
+    states: States
+    _lut: np.ndarray = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "states", _as_states(self.states))
+        object.__setattr__(self, "_lut", _lut(self.states))
+
+    def mask(self, current, neighbours, rng=None):
+        return self._lut[neighbours[..., self.position]]
+
+    def validate(self, num_states, neighborhood_size):
+        if not 0 <= self.position < neighborhood_size:
+            raise ValueError(f"position {self.position} is outside a neighbourhood of {neighborhood_size} cells")
+        _check_states(self.states, num_states, "NeighbourIn state")
 
 
 @dataclass(frozen=True)
@@ -110,6 +241,10 @@ class WithProbability(Condition):
     p: float
 
     def mask(self, current, neighbours, rng=None):
+        if self.p == 0.0:
+            return np.zeros(current.shape, dtype=bool)
+        if self.p == 1.0:
+            return np.ones(current.shape, dtype=bool)
         return _require_rng(rng, "WithProbability").random(current.shape) < self.p
 
     def validate(self, num_states, neighborhood_size):
@@ -123,12 +258,24 @@ class WithProbability(Condition):
 
 @dataclass(frozen=True)
 class And(Condition):
+    """All parts hold. Stops evaluating once no cell is left."""
+
     parts: tuple[Condition, ...]
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "parts", tuple(self.parts))
+
     def mask(self, current, neighbours, rng=None):
-        return np.logical_and.reduce([p.mask(current, neighbours, rng) for p in self.parts])
+        result = self.parts[0].mask(current, neighbours, rng)
+        for p in self.parts[1:]:
+            if not result.any():
+                break
+            result = result & p.mask(current, neighbours, rng)
+        return result
 
     def validate(self, num_states, neighborhood_size):
+        if not self.parts:
+            raise ValueError("And needs at least one part")
         for p in self.parts:
             p.validate(num_states, neighborhood_size)
 
@@ -139,12 +286,24 @@ class And(Condition):
 
 @dataclass(frozen=True)
 class Or(Condition):
+    """At least one part holds. Stops evaluating once every cell is covered."""
+
     parts: tuple[Condition, ...]
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "parts", tuple(self.parts))
+
     def mask(self, current, neighbours, rng=None):
-        return np.logical_or.reduce([p.mask(current, neighbours, rng) for p in self.parts])
+        result = self.parts[0].mask(current, neighbours, rng)
+        for p in self.parts[1:]:
+            if result.all():
+                break
+            result = result | p.mask(current, neighbours, rng)
+        return result
 
     def validate(self, num_states, neighborhood_size):
+        if not self.parts:
+            raise ValueError("Or needs at least one part")
         for p in self.parts:
             p.validate(num_states, neighborhood_size)
 
@@ -218,6 +377,9 @@ class RandomChoice(Target):
         object.__setattr__(self, "probabilities", {int(s): float(p) for s, p in self.probabilities.items()})
 
     def resolve(self, current, neighbours, rng=None):
+        positive = [s for s, p in self.probabilities.items() if p > 0]
+        if len(positive) == 1:
+            return np.full_like(current, positive[0])
         states = np.fromiter(self.probabilities.keys(), dtype=current.dtype)
         probs = np.fromiter(self.probabilities.values(), dtype=float)
         return _require_rng(rng, "RandomChoice").choice(states, size=current.shape, p=probs)

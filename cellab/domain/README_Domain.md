@@ -36,9 +36,10 @@ inwards. If you need something from another layer inside `domain`, it probably b
 ```
 domain/
 ├── grid.py            Grid (immutable board), CellType
-├── neighborhood.py    Neighborhood (abstract), Moore, VonNeumann, Line, Custom
+├── neighborhood.py    Neighborhood (abstract), Moore, VonNeumann, Diagonal, Line, Custom, COMPASS names
 ├── boundary.py        Boundary (abstract), Periodic, Fixed, Reflect
 ├── automaton.py       Automaton: cell types + neighbourhood + boundary + rule
+├── universe.py        Universe (abstract): one generation of a world; ArrayUniverse (bounded, one Grid)
 ├── presets.py         Ready-made automata: elementary / rule_30, cyclic, game_of_life, forest_fire
 └── rules/
     ├── base.py        Rule (abstract), check_state helper
@@ -52,12 +53,14 @@ Imports you will normally need:
 
 ```python
 from domain import Automaton, CellType, Grid
-from domain import Moore, VonNeumann, Line, Custom          # neighbourhoods
-from domain import Periodic, Fixed, Reflect                 # boundaries
+from domain import Moore, VonNeumann, Diagonal, Line, Custom    # neighbourhoods
+from domain import Periodic, Fixed, Reflect                     # boundaries
+from domain import ArrayUniverse                                # a world at one generation
 from domain.rules import (
     LookupTableRule, TotalisticRule, ConditionalRule, Branch,
-    CellIs, CountInRange, WithProbability,                  # conditions
-    SetTo, Identity, RandomChoice,                          # targets
+    CellIs, CellIn, CountInRange, CountInSet, MoreThan,         # conditions
+    NeighbourIn, WithProbability,
+    SetTo, Identity, RandomChoice,                              # targets
 )
 from domain import presets
 ```
@@ -163,7 +166,7 @@ The constructor parameters below are the **contract** for whoever builds these o
 | | |
 |---|---|
 | `CellType(name)` | A named state. Its integer value is its **position** in `Automaton.cell_types`. |
-| `Grid(cells)` | Immutable n-dimensional array of state indices. Accepts lists or NumPy arrays of ints/bools. Always copies its input. |
+| `Grid(cells)` | Immutable n-dimensional array of state indices. Accepts lists or NumPy arrays of ints/bools. Always copies its input; `uint8` input skips the range scan. `step()` wraps its output without a copy. |
 | `grid.cells` | Read-only NumPy array (`uint8`). Writing to it raises an error. |
 | `grid.shape`, `grid.ndim` | As in NumPy. |
 | `grid.hash()` | Stable content hash (hex string). Same board → same hash on every machine. Used for cycle detection. |
@@ -178,12 +181,18 @@ The constructor parameters below are the **contract** for whoever builds these o
 |---|---|---|---|
 | `Moore` | `radius=1, dimensions=2, include_center=False` | 8 in 2D for radius 1 | row-major: `(-1,-1), (-1,0), (-1,1), (0,-1), (0,1), (1,-1), (1,0), (1,1)` |
 | `VonNeumann` | `radius=1, dimensions=2, include_center=False` | 4 in 2D for radius 1 | row-major: up, left, right, down |
+| `Diagonal` | `radius=1, dimensions=2` | 4 in 2D for radius 1 | row-major: `(-1,-1), (-1,1), (1,-1), (1,1)` |
 | `Line` | `radius=1, include_center=True` | 3 for radius 1 | left to right: `(left, self, right)` |
-| `Custom` | `points` (tuple of offset tuples) | any | exactly as given |
+| `Custom` | `points` (tuple of offset tuples), `labels=None` | any | exactly as given |
 
 Useful attributes: `offsets()`, `size` (number of neighbours), `ndim`, `reach` (how far the boundary must pad).
 
 Offsets are `(row, column)` in 2D. The neighbourhood's `ndim` must match the grid's.
+
+**Position names.** `names()` maps a position name to its index in `offsets()`, and `index_of(name)` looks one
+up (raising `KeyError` with the valid names). 2D `Moore`, `VonNeumann` and `Diagonal` with radius 1 use the
+compass names in `COMPASS` (`north`, `north_east`, `east`, …; row 0 is the top). Larger radii have no names.
+`Custom.named({"left": (0, -1), "right": (0, 1)})` names custom points.
 
 ### Boundaries (`boundary.py`)
 
@@ -229,10 +238,19 @@ branch use `otherwise`, which is required, so every cell always gets a next stat
 | Condition | Parameters | True when |
 |---|---|---|
 | `CellIs(state)` | | the cell itself is in `state` |
-| `CountInRange(state, minimum=None, maximum=None)` | bounds inclusive, one may be `None` | `minimum ≤ neighbours in state ≤ maximum` |
-| `CountInRange.at_least(state, n)` / `.at_most(...)` / `.exactly(...)` | | shortcuts for the above |
+| `CellIn(states)` | one state or a set (a group) | the cell itself is in any of `states` |
+| `CountInRange(states, minimum=None, maximum=None)` | bounds inclusive, one may be `None` | `minimum ≤ neighbours in states ≤ maximum` |
+| `CountInRange.at_least(states, n)` / `.at_most(...)` / `.exactly(...)` | | shortcuts for the above |
+| `CountInSet(states, allowed)` | set of counts | the number of neighbours in `states` is one of `allowed` |
+| `MoreThan(states, than)` | | strictly more neighbours in `states` than in `than` (a tie is `False`) |
+| `NeighbourIn(position, states)` | index into `offsets()` | the neighbour at that position is in any of `states` |
 | `WithProbability(p)` | `0 ≤ p ≤ 1` | randomly, independently per cell, with probability `p` |
-| `And(parts)`, `Or(parts)`, `Not(part)` | | combinations (what `&`, `\|`, `~` produce) |
+| `And(parts)`, `Or(parts)`, `Not(part)` | `parts` non-empty | combinations (what `&`, `\|`, `~` produce) |
+
+Wherever a condition takes `states`, it accepts a single int or any iterable of ints. Counting is per offset:
+on a tiny wrapped grid two offsets can land on the same cell, and it counts twice. A count that can never
+happen (at least 9 of 8 neighbours) is allowed and simply never matches. Use `neighbourhood.index_of(name)` to
+turn a position name into the index `NeighbourIn` needs.
 
 **Targets**:
 
@@ -250,18 +268,37 @@ Automaton(name, cell_types, neighborhood, boundary, rule)
 
 | Member | |
 |---|---|
-| `step(grid, rng=None) -> Grid` | One synchronous update. Pure: does not change the automaton or the input grid. |
+| `step(grid, rng=None, *, check=True) -> Grid` | One synchronous update. Pure: does not change the automaton or the input grid. `check=False` skips the grid scan, for grids this automaton produced. |
 | `num_states` | `len(cell_types)` |
 | `is_deterministic` | `False` if the rule contains anything random. |
+| `is_quiescent()` | `True` if a state-0 cell with all neighbours in state 0 stays 0. Infinite worlds require it. Always `False` for stochastic automata. |
 | `index_of(name)` | Cell type name → integer state, e.g. `a.index_of("alive") == 1`. |
 | `check_grid(grid)` | Raises `ValueError` if the grid has the wrong number of dimensions or invalid states. |
 
 **The constructor validates everything** and raises `ValueError` with a readable message. For example:
 - duplicate cell type names
 - a lookup pattern with the wrong length
-- a state index that doesn't exist
-- a count that can never happen with this neighbourhood
+- a state index that doesn't exist (in a rule, or as a `Fixed` boundary value)
+- a count range with negative bounds or minimum greater than maximum
+- a `NeighbourIn` position outside the neighbourhood, or an empty `And` / `Or`
 - probabilities outside `[0, 1]`, or a `RandomChoice` that doesn't sum to 1
+
+### `Universe` and `ArrayUniverse` (`universe.py`)
+
+A `Universe` is one generation of a world, independent of how the world is stored. Simulators and queries
+should talk to this interface; an implementation for infinite worlds can be added behind it later.
+
+| Member | |
+|---|---|
+| `step(n=1, rng=None) -> Universe` | The universe `n` generations later. Returns a new object. |
+| `generation` | Generation number, starting at 0. |
+| `counts()` | `{state: number of cells}`. Infinite worlds will leave out state 0. |
+| `window(start, shape)` | The cells of a box, e.g. `window([row, col], [height, width])`. |
+| `fingerprint()` | Equal worlds give equal strings; for stability and cycle detection. |
+| `bounds` | The world's shape, or `None` if unbounded. |
+
+`ArrayUniverse(automaton, grid, generation=0)` holds a bounded world as one `Grid` (also available as `.grid`).
+It checks the grid once and then steps without re-scanning it.
 
 If an `Automaton` was constructed successfully, it is guaranteed to be usable. The spec layer can pass
 these messages on to the user.
@@ -312,6 +349,33 @@ life = Automaton(
 This maps one-to-one onto the YAML rules: each `when` becomes a `Branch` and `otherwise` becomes `otherwise`.
 Cell type **names** from the spec become integers with their position in the `cell_types` list.
 
+**Spec v1 style (rules grouped by state, groups, positions):** each rule under a state or group key becomes
+`Branch(CellIn(key's states) & condition, SetTo(becomes))`, and `otherwise` is `Identity()` ("no match means
+unchanged"). A state is covered by at most one key, so the order between keys does not matter.
+
+```python
+from domain import Automaton, CellType, Custom, Fixed
+from domain.rules import ConditionalRule, Branch, CellIn, NeighbourIn, SetTo, Identity
+
+DEAD, ALIVE = 0, 1
+n = Custom.named({"left": (0, -1), "right": (0, 1)})
+left, right = n.index_of("left"), n.index_of("right")
+rule_30 = Automaton(
+    name="rule-30",
+    cell_types=[CellType("dead"), CellType("alive")],
+    neighborhood=n,                      # a 1-D world is a 2D grid with height 1
+    boundary=Fixed(DEAD),
+    rule=ConditionalRule(
+        [
+            Branch(CellIn(DEAD) & NeighbourIn(left, ALIVE) & NeighbourIn(right, DEAD), SetTo(ALIVE)),
+            Branch(CellIn(DEAD) & NeighbourIn(left, DEAD) & NeighbourIn(right, ALIVE), SetTo(ALIVE)),
+            Branch(CellIn(ALIVE) & NeighbourIn(left, ALIVE), SetTo(DEAD)),
+        ],
+        otherwise=Identity(),
+    ),
+)
+```
+
 **Probabilistic (random parts inside a conditional rule):**
 
 ```python
@@ -346,6 +410,8 @@ If a random condition fails, the cell falls through to the next branch.
 - `step(grid, rng=None)` takes an optional `numpy.random.Generator`.
 - **Deterministic automata ignore `rng`**, so `a.step(g)` is fine.
 - **Stochastic automata raise `ValueError` if `rng` is missing.** This is deliberate: it prevents runs that can't be reproduced.
+- Randomness that can't actually vary (`WithProbability(0)` or `(1)`, a `RandomChoice` with one non-zero
+  outcome) counts as deterministic and runs without an `rng`.
 - Create the generator **once per run** and reuse it for every step:
 
 ```python
@@ -390,8 +456,8 @@ To add new behaviour, subclass one part and implement its abstract methods:
 
 | To add a new… | Subclass | Implement | Optionally override |
 |---|---|---|---|
-| neighbourhood | `Neighborhood` | `offsets()` | – |
-| boundary | `Boundary` | `pad(cells, width)` | – |
+| neighbourhood | `Neighborhood` | `offsets()` | `names()` |
+| boundary | `Boundary` | `pad(cells, width)` | `validate(num_states)` |
 | rule family | `Rule` | `apply(current, neighbours, num_states, rng=None)` | `validate(...)`, `is_deterministic` |
 | condition | `Condition` | `mask(current, neighbours, rng=None)` | `validate(...)`, `is_deterministic` |
 | target | `Target` | `resolve(current, neighbours, rng=None)` | `validate(...)`, `is_deterministic` |
