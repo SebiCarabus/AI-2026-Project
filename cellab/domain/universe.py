@@ -1,8 +1,7 @@
 """Universe: one generation of a world, independent of how the world is stored.
 
 Simulators and queries talk to this interface. ArrayUniverse holds a bounded world
-as one Grid; a tree-based implementation for infinite worlds can be added later
-behind the same interface.
+as one Grid; TreeUniverse stores a sparse, hash-consed binary tree or quadtree.
 """
 from __future__ import annotations
 
