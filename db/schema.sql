@@ -39,3 +39,22 @@ CREATE TABLE checkpoints (
 
 -- The blob is already zlib-compressed, so stop Postgres from trying again.
 ALTER TABLE checkpoints ALTER COLUMN grid SET STORAGE EXTERNAL;
+
+-- Browser-facing saved run snapshots. Snapshot state is opaque to the database;
+-- state_encoding identifies the compression and payload format for future codecs.
+CREATE TABLE IF NOT EXISTS snapshots (
+  snapshot_id   BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  config_hash   TEXT        NOT NULL,
+  config_yaml   TEXT        NOT NULL,
+  preset        TEXT        NOT NULL,
+  display_name  TEXT        NOT NULL,
+  width         BIGINT      CHECK (width IS NULL OR width > 0),
+  height        BIGINT      CHECK (height IS NULL OR height > 0),
+  state_counts  BIGINT[]    NOT NULL,
+  generation    BIGINT      NOT NULL CHECK (generation >= 0),
+  state_encoding TEXT       NOT NULL,
+  state_blob    BYTEA       NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_snapshots_config_hash ON snapshots USING btree (config_hash);
+ALTER TABLE snapshots ALTER COLUMN state_blob SET STORAGE EXTERNAL;

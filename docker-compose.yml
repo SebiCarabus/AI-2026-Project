@@ -11,6 +11,50 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cellab -d cellab"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    image: cellab-api:latest
+    build:
+      context: .
+      dockerfile: cellab/web/backend/Dockerfile
+    ports: ["${CELLAB_API_PORT:-8000}:8000"]
+    environment:
+      DATABASE_URL: postgresql://cellab:cellab@db:5432/cellab
+      CELLAB_CONFIG_MAX_UPLOAD_MB: ${CELLAB_CONFIG_MAX_UPLOAD_MB:-10}
+      CELLAB_TREE_THRESHOLD_MB: ${CELLAB_TREE_THRESHOLD_MB:-150}
+      CELLAB_MAX_TREE_CELLS: ${CELLAB_MAX_TREE_CELLS:-100000}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/presets')"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  frontend:
+    image: cellab-frontend:latest
+    build:
+      context: ./cellab/web/frontend
+      dockerfile: Dockerfile
+    ports: ["${CELLAB_WEB_PORT:-8080}:80"]
+    environment:
+      CELLAB_CONFIG_MAX_UPLOAD_MB: ${CELLAB_CONFIG_MAX_UPLOAD_MB:-10}
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   pgdata:

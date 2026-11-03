@@ -1,0 +1,11 @@
+.git
+.env
+.env.*
+venv
+.venv
+**/node_modules
+**/dist
+**/__pycache__
+**/.pytest_cache
+**/.hypothesis
+**/*.py[cod]
