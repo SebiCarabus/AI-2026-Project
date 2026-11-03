@@ -258,6 +258,50 @@ classDiagram
 | Queries | `POST /simulations/{id}/queries/{state-at, stabilization, pattern, cell-count, cycle}` | The five questions |
 | State I/O | `POST /states/export`, `POST /states/import`, `GET /states` | Save and load boards and histories |
 
+### Running the preset web MVP
+
+The current web MVP is in `cellab/web/`: a React/Vite frontend and a FastAPI backend for
+the implemented presets. Install Python dependencies into the repository virtual
+environment with `venv/bin/pip install -r requirements.txt`. Start PostgreSQL from
+the repository root:
+
+```sh
+docker compose up -d db
+```
+
+Then run the API from `cellab/`:
+
+```sh
+export DATABASE_URL=postgresql://cellab:cellab@localhost:54329/cellab
+../venv/bin/uvicorn web.backend.main:app --reload
+```
+
+In another terminal, start the frontend from `cellab/web/frontend/`:
+
+```sh
+npm install
+npm run dev
+```
+
+Vite proxies `/api` requests to the API on port 8000. See
+[`cellab/web/backend/README.md`](cellab/web/backend/README.md) and
+[`cellab/web/frontend/README.md`](cellab/web/frontend/README.md) for details.
+
+To build and run the frontend, API, and PostgreSQL with Docker Compose from the repository
+root:
+
+```sh
+docker compose up --build
+```
+
+Open the UI at `http://localhost:8080`; the API is available at `http://localhost:8000`.
+Override the published ports with `CELLAB_WEB_PORT`, `CELLAB_API_PORT`, and
+`CELLAB_DB_PORT` if needed. YAML upload size defaults to 10 MiB and can be changed
+with `CELLAB_CONFIG_MAX_UPLOAD_MB`. Finite worlds switch from arrays to sparse
+trees above `CELLAB_TREE_THRESHOLD_MB` (default 150 MiB estimated working memory);
+`CELLAB_MAX_TREE_CELLS`
+sets the maximum initial non-zero support for tree-backed worlds (default 100,000).
+
 ## Queries
 
 The simulator acts as a trajectory generator that records `hash(state) -> generation` in a dictionary. All five questions then become cheap:
